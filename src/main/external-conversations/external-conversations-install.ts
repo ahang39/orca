@@ -197,8 +197,16 @@ function connectorReplyOutbox(
   const retry = emptyTurnRetry({
     journal,
     postedSince: (sessionId, at) => connectorPostAttempts.since(chatPaneKey(sessionId), at),
-    send: emptyRetrySend(getStructuredAgentSessionHost),
-    settled: (sessionId) => settleRetry(sessionId)
+    // Connectors turned off meanwhile: nothing is sent, and the next recovery closes what was held.
+    send: (sessionId, body, turnItemId) =>
+      signal.aborted
+        ? Promise.resolve('refused' as const)
+        : emptyRetrySend(getStructuredAgentSessionHost)(sessionId, body, turnItemId),
+    settled: (sessionId) => {
+      if (!signal.aborted) {
+        settleRetry(sessionId)
+      }
+    }
   })
   const fill = conversationReplyFill(
     journal,
