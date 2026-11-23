@@ -238,7 +238,7 @@ export const CONNECTOR_ACT_METHOD = defineMethod({
     }
     const toSlack = actionGoesToSlack({ verb, ref, title: args.title, conversation })
     if (verb === 'post' || verb === 'reply' || verb === 'attach') {
-      connectorPostAttempts.note(chatPaneKey(sessionId), verb === 'reply' ? 'here' : 'elsewhere')
+      connectorPostAttempts.attempted(chatPaneKey(sessionId))
     }
     const answer = await postConnectorAction(
       cloud,
@@ -258,6 +258,11 @@ export const CONNECTOR_ACT_METHOD = defineMethod({
         server: orcaSignInServer(runtime),
         botName: bot.name
       })
+    }
+    // A reply posted into the thread that woke the run is the turn's answer there; staging a file
+    // posts nothing yet.
+    if (verb === 'reply' && answer.value.ok && !args.upload && !args.stream) {
+      connectorPostAttempts.answered(chatPaneKey(sessionId))
     }
     if (verb === 'post' && answer.value.ok) {
       // Before the bot's next command, so a reply right after it knows the answer is already posted.

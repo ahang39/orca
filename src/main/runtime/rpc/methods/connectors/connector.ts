@@ -70,7 +70,7 @@ export const CONNECTOR_METHODS = [
         cloud?.cloudFeatures()?.has(CONNECTOR_REPLIES_OUTBOX_FEATURE) === true
           ? { answerDeliveryId: target.answerDeliveryId }
           : {}
-      connectorPostAttempts.note(paneKey, 'here')
+      connectorPostAttempts.attempted(paneKey)
       const sent = await cloud?.reply({
         replyId,
         conversation,
@@ -88,6 +88,7 @@ export const CONNECTOR_METHODS = [
           sent.error === 'not_this_hosts_thread' ? 'not_this_hosts_thread' : 'connector_unavailable'
         )
       }
+      connectorPostAttempts.answered(paneKey)
       return { ...sent.value, place: target.place }
     }
   }),

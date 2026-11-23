@@ -35,6 +35,7 @@ import type { ConnectorReplyCutJournal } from '../connector-cloud/connector-repl
 import { conversationReplyFill } from './external-conversation-reply-fill'
 import { usageLimitReplyPause } from './external-conversation-reply-pause'
 import { emptyTurnRetry, type EmptyRetrySend } from './external-conversation-reply-empty-retry'
+import type { ConnectorPostAttempt } from './connector-post-attempts'
 import { ConnectorReplyRecovery } from './external-conversation-reply-recovery'
 import { connectorReplyTurnStamps } from '../../shared/agent-session/journal/journal-connector-reply-turn'
 import { replyEventsOf } from '../connector-cloud/connector-reply-outbox'
@@ -158,7 +159,7 @@ function start(
     /** A bot's chat: its quiet marker counts. */
     bot?: boolean
     /** An empty turn's retry: whether the chat tried a post itself, and how its ask's send goes. */
-    retry?: { posted?: 'here' | 'elsewhere'; send: EmptyRetrySend }
+    retry?: { posted?: ConnectorPostAttempt; send: EmptyRetrySend }
   } = {}
 ) {
   const { bot = false, retry: retrying, ...recoveryOptions } = options
@@ -794,11 +795,11 @@ describe('an empty turn is asked once more, from its live end only', () => {
     expect(p.outcomes()).toEqual({ d1: { outcome: 'no_answer', head: 'd1', toolsRan: true } })
   })
 
-  // A post into its own thread is the turn's answer; one elsewhere still leaves the request owed one.
+  // A confirmed reply into its own thread is the turn's answer; any other try still owes one.
   it.each([
-    ['elsewhere', 'no_answer'],
-    ['here', 'quiet']
-  ] as const)('never asks when the chat tried a post %s in the turn', async (posted, outcome) => {
+    ['attempted', 'no_answer'],
+    ['answered', 'quiet']
+  ] as const)('never asks when the chat’s post in the turn was %s', async (posted, outcome) => {
     const p = start({ bot: true, retry: { posted, send: send('accepted') } })
     admit(p.db, 'm1', asked('d1'))
     p.show([p.message('m1'), ...p.turn('item:t1', 'm1', 'completed')])

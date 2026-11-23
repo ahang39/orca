@@ -1,33 +1,44 @@
-// When each chat last tried to post into Slack itself, by its pane key: `orca bot reply` and a
-// connector reply (into its own conversation), or a post or attach (anywhere). Noted before the cloud
-// call, so a failed or uncertain post counts too. Memory only: after a restart no live turn end
-// retries anything.
+// When each chat, by its pane key, last tried to post into Slack itself, and last answered its own
+// conversation with a confirmed reply. An attempt is noted before the cloud call, so a failed or
+// uncertain post still counts as one. Memory only: after a restart no live turn end retries anything.
 
-/** Where a chat's turn tried to post: into the conversation it answers, or somewhere else. */
-export type ConnectorPostAttempt = 'here' | 'elsewhere'
+/** A turn's own posts: a confirmed reply into the conversation it answers, or only an attempt. */
+export type ConnectorPostAttempt = 'answered' | 'attempted'
 
-// Read once per ended turn; chats that never get one are dropped oldest first past this many.
+// One entry per chat that posted; past this many, the longest idle goes first.
 const MAX_CHATS = 1000
 
 export class ConnectorPostAttempts {
-  private readonly last = new Map<string, { at: number; here: boolean }>()
+  private readonly last = new Map<string, { attemptAt: number; answeredAt?: number }>()
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  note(paneKey: string, where: ConnectorPostAttempt): void {
-    const here = where === 'here' || this.last.get(paneKey)?.here === true
+  /** Before the cloud call. */
+  attempted(paneKey: string): void {
+    this.write(paneKey, { ...this.last.get(paneKey), attemptAt: this.now() })
+  }
+
+  /** The cloud confirmed a reply into the chat's own conversation. */
+  answered(paneKey: string): void {
+    const at = this.now()
+    this.write(paneKey, { attemptAt: at, answeredAt: at })
+  }
+
+  /** What the chat's turn that started at `at` posted itself. */
+  since(paneKey: string, at: number): ConnectorPostAttempt | null {
+    const last = this.last.get(paneKey)
+    if (!last || last.attemptAt < at) {
+      return null
+    }
+    return last.answeredAt !== undefined && last.answeredAt >= at ? 'answered' : 'attempted'
+  }
+
+  private write(paneKey: string, entry: { attemptAt: number; answeredAt?: number }): void {
     this.last.delete(paneKey)
-    this.last.set(paneKey, { at: this.now(), here })
+    this.last.set(paneKey, entry)
     if (this.last.size > MAX_CHATS) {
       this.last.delete(this.last.keys().next().value!)
     }
-  }
-
-  /** What the chat tried at or after `at` (its ended turn's start), forgotten once read. */
-  takeSince(paneKey: string, at: number): ConnectorPostAttempt | null {
-    const last = this.last.get(paneKey)
-    this.last.delete(paneKey)
-    return last && last.at >= at ? (last.here ? 'here' : 'elsewhere') : null
   }
 }
 

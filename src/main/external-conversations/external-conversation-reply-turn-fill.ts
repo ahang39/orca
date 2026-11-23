@@ -53,7 +53,7 @@ export async function fillRecoveredTurn(
       stamps,
       ...(opener ? { openerItemId: opener.itemId } : {}),
       outcome,
-      ...structuredAgentSessionTurnReply(snapshot.items, turn.itemId),
+      ...structuredAgentSessionTurnReply(snapshot.items, turn.itemId, deps.isBot(sessionId)),
       bot: deps.isBot(sessionId),
       links: [],
       ...(outcome === 'failure'

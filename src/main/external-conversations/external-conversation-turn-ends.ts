@@ -147,7 +147,7 @@ export async function endRepliedTurn(
     stamps: turn.stamps,
     ...(turn.opener ? { openerItemId: turn.opener.itemId } : {}),
     outcome: end.news.outcome,
-    prose: turn.turnProse ?? '',
+    prose: (link.bot ? turn.turnBotProse : turn.turnProse) ?? '',
     toolsRan: turn.turnToolsRan === true,
     live: true,
     ...askedByOf(turn.opener?.body),

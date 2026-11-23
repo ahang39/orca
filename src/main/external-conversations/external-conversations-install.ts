@@ -196,7 +196,7 @@ function connectorReplyOutbox(
   let settleRetry: (sessionId: string) => void = () => {}
   const retry = emptyTurnRetry({
     journal,
-    postedSince: (sessionId, at) => connectorPostAttempts.takeSince(chatPaneKey(sessionId), at),
+    postedSince: (sessionId, at) => connectorPostAttempts.since(chatPaneKey(sessionId), at),
     send: emptyRetrySend(getStructuredAgentSessionHost),
     settled: (sessionId) => settleRetry(sessionId)
   })

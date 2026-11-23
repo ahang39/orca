@@ -21,12 +21,14 @@ const RETRY_AFTER_TOOLS_PROMPT = `Your last turn ran tools but ended without a w
  *  unknown (it may have). */
 export type EmptyRetrySend = (
   sessionId: string,
-  body: AgentJournalMessageItem
+  body: AgentJournalMessageItem,
+  /** The empty turn: a chat whose newest turn is another by then has moved on. */
+  turnItemId: string
 ) => Promise<'accepted' | 'refused' | 'unknown'>
 
 export type EmptyTurnRetry = {
-  /** Holds an empty turn's rows for its one retry and sends it. `posted`: the turn posted into its
-   *  own conversation itself, which is its answer, so it closes quiet. False fills them as they are. */
+  /** Holds an empty turn's rows for its one retry and sends it. `posted`: the turn's confirmed reply
+   *  into its own conversation is its answer, so it closes quiet. False fills them as they are. */
   hold: (
     turn: EndedTurnReplies,
     own: readonly JournalConnectorReplyRow[]
@@ -62,7 +64,7 @@ export function emptyTurnRetry(deps: {
         return false
       }
       const posted = deps.postedSince(turn.sessionId, turn.turnStartedAt)
-      if (posted === 'here') {
+      if (posted === 'answered') {
         return 'posted'
       }
       if (posted || own.some((row) => row.emptyRetried)) {
@@ -106,7 +108,7 @@ export function emptyTurnRetry(deps: {
       }
       // Not awaited: the turn end goes on, and the retry's own turn fills the rows it claims.
       void deps
-        .send(turn.sessionId, body)
+        .send(turn.sessionId, body, turn.turnItemId)
         .catch(() => 'unknown' as const)
         .finally(() => {
           release()
@@ -117,13 +119,17 @@ export function emptyTurnRetry(deps: {
   }
 }
 
-/** The ask, sent only into an idle chat: a turn running by then would take it in as a steer, and
- *  its claim would answer nothing. A continuation, so no Slack mirror posts it as the owner's. */
+/** The ask, sent only into an idle chat whose newest turn is still the empty one: a running turn
+ *  would take it in as a steer, and a newer one would be the turn it asks about. A continuation, so
+ *  no Slack mirror posts it as the owner's. */
 export function emptyRetrySend(chat: () => ConversationChat | null): EmptyRetrySend {
-  return async (sessionId, body) => {
+  return async (sessionId, body, turnItemId) => {
     const host = chat()
     const record = host?.deps.store.getConversation(sessionId)
-    if (!host || !record || !chatIsIdle(host, sessionId)) {
+    const ready = () =>
+      chatIsIdle(host, sessionId) &&
+      host?.publishedWork(sessionId)?.latestTurn?.itemId === turnItemId
+    if (!host || !record || !ready()) {
       return 'refused'
     }
     let admitted = false
@@ -137,8 +143,8 @@ export function emptyRetrySend(chat: () => ConversationChat | null): EmptyRetryS
         }),
         continuation: true,
         beforeRun: () => {
-          if (!chatIsIdle(host, sessionId)) {
-            throw new Error('chat_busy')
+          if (!ready()) {
+            throw new Error('chat_moved_on')
           }
           admitted = true
         }
