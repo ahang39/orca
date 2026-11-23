@@ -1,5 +1,6 @@
 import {
   isRemoteLoopbackHttpLink,
+  openOwnedSystemHttpLink,
   localhostLabelRouteForHttpLink,
   openLabeledLocalhostLink
 } from './http-link-localhost-route'
@@ -289,7 +290,7 @@ function executeHttpLink(
 
   const localhostRoute = state ? localhostLabelRouteForHttpLink(url, state, sourceOwner) : null
   if (!localhostRoute) {
-    void openSystemHttpLink(url)
+    openOwnedSystemHttpLink(url, effectiveSourceOwner, openSystemHttpLink)
     return 'system-browser'
   }
   void openLabeledLocalhostLink(url, localhostRoute, (labeledUrl) => {
