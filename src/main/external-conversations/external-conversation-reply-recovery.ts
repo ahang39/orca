@@ -74,6 +74,8 @@ export class ConnectorReplyRecovery {
       usageLimitDisposition?: (sessionId: string, turnItemId: string) => Promise<string | undefined>
       /** Settles once this start continued what the last run cut, or left it to a person. */
       continuationsSettled?: Promise<unknown>
+      /** Rows held for an empty turn's retry still being sent: its send settles them. */
+      retrySending?: (row: Unfilled) => boolean
     }
   ) {
     this.continuationsSettled = deps.continuationsSettled === undefined
@@ -158,7 +160,8 @@ export class ConnectorReplyRecovery {
     if (!journal || !chat) {
       return
     }
-    const unfilled = (await journal.read(sessionId)).filter((row) => !row.fill)
+    const sending = this.deps.retrySending ?? (() => false)
+    const unfilled = (await journal.read(sessionId)).filter((row) => !row.fill && !sending(row))
     if (unfilled.length === 0) {
       this.unwatch(sessionId)
       this.deps.filled()
@@ -193,7 +196,7 @@ export class ConnectorReplyRecovery {
       ...turns.filter((turn) => turnVerdictOf(turn) !== null).map((turn) => turn.sequence)
     )
     const settled = this.continuationsSettled
-    const left = (await journal.read(sessionId)).filter((row) => !row.fill)
+    const left = (await journal.read(sessionId)).filter((row) => !row.fill && !sending(row))
     const endedCuts = new Set<string>()
     const paused = left.flatMap((row) =>
       row.cut?.kind === 'usage_limit' && row.claimMessageId === undefined ? [row.cut.turnId] : []

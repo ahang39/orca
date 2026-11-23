@@ -64,7 +64,18 @@ export type JournalConnectorReplyRow = JournalConnectorReplyKey & {
   claimMessageId?: string
   /** Unfilled: the usage-limit failure its cut keeps for a close without a continuation. */
   cutFailure?: ConnectorFailure
+  /** Its turn ended with no answer and was asked once more; never asked again. */
+  emptyRetried?: true
   fill?: Omit<JournalConnectorReplyFill, keyof JournalConnectorReplyKey> & { filledAt: number }
+}
+
+/** An empty turn's rows held for its one retry: its open rows and the rows its continuation
+ *  claimed, cut for the retry to claim, marked retried, and keeping whether the turn ran a tool. */
+export type JournalConnectorReplyRetryRows = {
+  keys: readonly JournalConnectorReplyKey[]
+  claims: readonly string[]
+  cut: JournalConnectorReplyCut
+  toolsRan: boolean
 }
 
 /** Open rows a cut now owes; a failure (a usage-limit cut's, with its reset) is kept for its close. */

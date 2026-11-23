@@ -12,6 +12,8 @@ import type { ConnectorFailure } from '../../shared/connectors/connector-cloud-c
 import type { ConnectorWorkLink } from '../../shared/connector-work-link-contract'
 import type { ConnectorReplyJournal } from '../connector-cloud/connector-reply-outbox'
 import { capAnswer } from '../connector-cloud/connector-snapshot'
+import type { EmptyTurnRetry } from './external-conversation-reply-empty-retry'
+import type { AgentJournalMessageItem } from '../../shared/agent-session/journal/agent-session-journal-types'
 import { agentJournalSubmissionKey } from '../../shared/agent-session/journal/agent-session-journal-item-key'
 
 export type EndedTurnReplies = {
@@ -32,6 +34,10 @@ export type EndedTurnReplies = {
   tookMs?: number
   /** The turn's turn-started `at` as its conversation knows it; absent after a restart. */
   turnStartedAt?: number
+  /** The live turn end's, never boot recovery's: only it may retry an empty turn. */
+  live?: true
+  /** Who asked the turn and through what, from its opener: a retry asks for them. */
+  askedBy?: Pick<AgentJournalMessageItem, 'origin' | 'asker' | 'connectorConversation'>
 }
 
 /** What a fill did: the conversations its rows cover, and whether a usage-limit pause cut them
@@ -61,7 +67,8 @@ const keyOf = (account: string, deliveryId: string): string => `${account}\0${de
 export function conversationReplyFill(
   journal: () => ConnectorReplyJournal | null,
   filled: () => void,
-  pause?: UsageLimitPause
+  pause?: UsageLimitPause,
+  retry?: Pick<EmptyTurnRetry, 'hold'>
 ): ConversationReplyFill {
   return async (turn) => {
     const store = journal()
@@ -109,9 +116,18 @@ export function conversationReplyFill(
     if (paused) {
       return { covered, paused: true, ...paused }
     }
+    const held = await retry?.hold(turn, own)
+    if (held === 'held') {
+      return { covered, paused: false }
+    }
     const fills: JournalConnectorReplyFill[] = []
     for (const row of own) {
-      const { outcome, prose } = connectorReplyTurnOutcome(turn)
+      const reading = connectorReplyTurnOutcome(turn)
+      // A turn that posted into its conversation itself answered there.
+      const { outcome, prose } =
+        held === 'posted' && reading.outcome === 'no_answer'
+          ? { outcome: 'quiet' as const }
+          : reading
       const conversation = JSON.stringify([row.account, row.conversation])
       const answerDeliveryId = answers.get(conversation) ?? row.deliveryId
       fills.push({

@@ -19,6 +19,7 @@ import {
   cutJournalConnectorReplies,
   fillJournalConnectorReplies,
   recutJournalConnectorReplies,
+  holdJournalConnectorRepliesForRetry,
   releaseJournalConnectorClaim,
   sentJournalConnectorReplies
 } from '../native-chat/agent-session-journal/connector-replies/journal-connector-replies'
@@ -33,6 +34,7 @@ import Database from '../sqlite/sync-database'
 import type { ConnectorReplyCutJournal } from '../connector-cloud/connector-reply-outbox'
 import { conversationReplyFill } from './external-conversation-reply-fill'
 import { usageLimitReplyPause } from './external-conversation-reply-pause'
+import { emptyTurnRetry, type EmptyRetrySend } from './external-conversation-reply-empty-retry'
 import { ConnectorReplyRecovery } from './external-conversation-reply-recovery'
 import { connectorReplyTurnStamps } from '../../shared/agent-session/journal/journal-connector-reply-turn'
 import { replyEventsOf } from '../connector-cloud/connector-reply-outbox'
@@ -93,7 +95,8 @@ function openJournal() {
     sent: async (keys) => sentJournalConnectorReplies(db, keys, NOW),
     cut: async (rows) => cutJournalConnectorReplies(db, rows) > 0,
     recut: async (claim, cut, failure) => recutJournalConnectorReplies(db, claim, cut, failure) > 0,
-    releaseClaim: async (claim) => releaseJournalConnectorClaim(db, claim) > 0
+    releaseClaim: async (claim) => releaseJournalConnectorClaim(db, claim) > 0,
+    holdForRetry: async (rows) => holdJournalConnectorRepliesForRetry(db, rows) > 0
   }
   return { db, journal }
 }
@@ -154,9 +157,11 @@ function start(
     usageLimitDisposition?: (sessionId: string, turnItemId: string) => Promise<string>
     /** A bot's chat: its quiet marker counts. */
     bot?: boolean
+    /** An empty turn's retry: whether the chat tried a post itself, and how its ask's send goes. */
+    retry?: { posted?: 'here' | 'elsewhere'; send: EmptyRetrySend }
   } = {}
 ) {
-  const { bot = false, ...recoveryOptions } = options
+  const { bot = false, retry: retrying, ...recoveryOptions } = options
   const { db, journal } = openJournal()
   let items: AgentJournalRenderItem[] = []
   let submissions: AgentJournalSubmission[] = []
@@ -176,12 +181,22 @@ function start(
       return () => observers.splice(observers.indexOf(observer), 1)
     }
   }
+  const retry =
+    retrying &&
+    emptyTurnRetry({
+      journal: () => journal,
+      postedSince: () => retrying.posted ?? null,
+      send: retrying.send,
+      settled: (sessionId) => recovery.turnEnded(sessionId)
+    })
   const fill = conversationReplyFill(
     () => journal,
     () => {},
-    usageLimitReplyPause(() => journal, options.usageLimitDisposition ?? (async () => 'ended'))
+    usageLimitReplyPause(() => journal, options.usageLimitDisposition ?? (async () => 'ended')),
+    retry
   )
-  const recovery = new ConnectorReplyRecovery({
+  const recovery: ConnectorReplyRecovery = new ConnectorReplyRecovery({
+    ...(retry ? { retrySending: retry.sending } : {}),
     journal: () => journal,
     // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: recovery calls only these chat members.
     chat: () => chat as never,
@@ -249,7 +264,8 @@ function start(
           outcome: row.fill?.outcome ?? null,
           ...(row.fill?.prose ? { prose: row.fill.prose } : {}),
           ...(row.fill?.answerDeliveryId ? { head: row.fill.answerDeliveryId } : {}),
-          ...(row.fill?.failure ? { category: row.fill.failure.category } : {})
+          ...(row.fill?.failure ? { category: row.fill.failure.category } : {}),
+          ...(row.fill?.toolsRan ? { toolsRan: true } : {})
         }
       ])
     )
@@ -719,6 +735,98 @@ describe('the reply names the turn that answered it', () => {
     const [event] = await owedEvents(p.journal)
     expect(event).toMatchObject({ deliveryIds: ['d1'], outcome: 'answered' })
     expect(event).not.toHaveProperty('turnId')
+  })
+})
+
+describe('an empty turn is asked once more, from its live end only', () => {
+  const call = { kind: 'tool-call', name: 'Bash', input: {}, state: 'completed' } as const
+  const tool = (key: string, at: number): AgentJournalRenderItem => ({
+    itemId: `tool-${key}`,
+    revision: 1,
+    sequence: at,
+    observedAt: at,
+    body: call,
+    turnScope: { kind: 'turn', turnItemId: key }
+  })
+  const asks: AgentJournalMessageItem[] = []
+  const send =
+    (result: Awaited<ReturnType<EmptyRetrySend>>): EmptyRetrySend =>
+    async (_id, body) => {
+      asks.push(body)
+      return result
+    }
+  beforeEach(() => asks.splice(0))
+  const asking = (result: Awaited<ReturnType<EmptyRetrySend>>) =>
+    start({ bot: true, continuationsSettled: Promise.resolve(), retry: { send: send(result) } })
+  const ended = { sessionId: 'chat-1', stamps: [stampOf('d1')], prose: '', bot: true, links: [] }
+  const liveEnd = (p: ReturnType<typeof start>, key: string, opener: string, toolsRan: boolean) =>
+    p.fillTurn({
+      ...ended,
+      turnItemId: key,
+      openerItemId: agentJournalSubmissionKey(opener),
+      outcome: 'success',
+      toolsRan,
+      turnStartedAt: NOW,
+      live: true
+    })
+
+  it('asks once; still empty, the request closes with no answer and the first turn’s tools', async () => {
+    const p = asking('accepted')
+    admit(p.db, 'm1', asked('d1'))
+    p.show([p.message('m1'), tool('item:t1', 40), ...p.turn('item:t1', 'm1', 'completed')])
+    await liveEnd(p, 'item:t1', 'm1', true)
+    expect(p.outcomes()).toEqual({ d1: { outcome: null } })
+    admit(p.db, 'r1', asks[0]!)
+    p.show([...p.items(), p.message('r1'), ...p.turn('item:t2', 'r1', 'completed')])
+    await liveEnd(p, 'item:t2', 'r1', false)
+    await p.publish()
+    expect(asks).toHaveLength(1)
+    expect(p.outcomes()).toEqual({ d1: { outcome: 'no_answer', head: 'd1', toolsRan: true } })
+  })
+
+  it('never asks for a turn found at boot, whose words before its last tool are no answer', async () => {
+    const p = asking('accepted')
+    admit(p.db, 'm1', asked('d1'))
+    const said = p.turn('item:t1', 'm1', 'completed', 'Running it now.')
+    p.show([p.message('m1'), ...said.slice(0, 1), tool('item:t1', 60), ...said.slice(1)])
+    await p.recovery.boot()
+    expect(asks).toHaveLength(0)
+    expect(p.outcomes()).toEqual({ d1: { outcome: 'no_answer', head: 'd1', toolsRan: true } })
+  })
+
+  // A post into its own thread is the turn's answer; one elsewhere still leaves the request owed one.
+  it.each([
+    ['elsewhere', 'no_answer'],
+    ['here', 'quiet']
+  ] as const)('never asks when the chat tried a post %s in the turn', async (posted, outcome) => {
+    const p = start({ bot: true, retry: { posted, send: send('accepted') } })
+    admit(p.db, 'm1', asked('d1'))
+    p.show([p.message('m1'), ...p.turn('item:t1', 'm1', 'completed')])
+    await liveEnd(p, 'item:t1', 'm1', false)
+    expect(asks).toHaveLength(0)
+    expect(p.outcomes()).toEqual({ d1: { outcome, head: 'd1' } })
+  })
+
+  it('keeps the root’s answer when a child’s tool call lands after it', async () => {
+    const p = start({ bot: true, continuationsSettled: Promise.resolve() })
+    admit(p.db, 'm1', asked('d1'))
+    const said = p.turn('item:t1', 'm1', 'completed', 'Here it is.')
+    const child = { ...tool('item:t1', 60), agentId: 'sub-1' }
+    p.show([p.message('m1'), ...said.slice(0, 1), child, ...said.slice(1)])
+    await p.recovery.boot()
+    expect(p.outcomes()).toEqual({
+      d1: { outcome: 'answered', prose: 'Here it is.', head: 'd1' }
+    })
+  })
+
+  it('closes with no answer at once when the ask is refused', async () => {
+    const p = asking('refused')
+    admit(p.db, 'm1', asked('d1'))
+    p.show([p.message('m1'), ...p.turn('item:t1', 'm1', 'completed')])
+    await liveEnd(p, 'item:t1', 'm1', false)
+    await p.publish()
+    expect(asks).toHaveLength(1)
+    expect(p.outcomes()).toEqual({ d1: { outcome: 'no_answer', head: 'd1' } })
   })
 })
 

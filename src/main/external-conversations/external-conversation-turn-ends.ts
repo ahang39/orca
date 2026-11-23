@@ -8,7 +8,12 @@ import type { ConversationEvent } from './external-conversation-events'
 import { connectorFailure } from './external-conversation-failure'
 import type { SlackMirrorTurn } from './slack-mirror'
 import type { EndedChatTurn } from './external-conversation-ended-turn'
-import type { ConversationReplyFill, FilledTurn } from './external-conversation-reply-fill'
+import type {
+  ConversationReplyFill,
+  EndedTurnReplies,
+  FilledTurn
+} from './external-conversation-reply-fill'
+import type { AgentJournalItemBody } from '../../shared/agent-session/journal/agent-session-journal-types'
 import type { ExternalConversationLink } from '../../shared/connectors/external-conversation-link'
 import type { ConnectorWorkLink } from '../../shared/connector-work-link-contract'
 import { connectorReplyWords } from '../../shared/agent-session/journal/journal-connector-reply-turn'
@@ -144,6 +149,8 @@ export async function endRepliedTurn(
     outcome: end.news.outcome,
     prose: turn.turnProse ?? '',
     toolsRan: turn.turnToolsRan === true,
+    live: true,
+    ...askedByOf(turn.opener?.body),
     bot: Boolean(link.bot),
     links: link.bot ? await links() : [],
     ...turnTimesOf(end.ended),
@@ -249,4 +256,18 @@ function ownerDmAnswer(link: ExternalConversationLink, turn: EndedChatTurn): boo
 export function turnReply(link: ExternalConversationLink, turn: EndedChatTurn): string | undefined {
   const message = turn.lastAssistantMessage
   return link.bot && message && isQuietBotResult(message) ? undefined : message
+}
+
+/** Who asked a turn and through what, as its opener carries it. */
+function askedByOf(body: AgentJournalItemBody | undefined): Pick<EndedTurnReplies, 'askedBy'> {
+  if (body?.kind !== 'message') {
+    return {}
+  }
+  const { origin, asker, connectorConversation } = body
+  const askedBy = {
+    ...(origin ? { origin } : {}),
+    ...(asker ? { asker } : {}),
+    ...(connectorConversation ? { connectorConversation } : {})
+  }
+  return Object.keys(askedBy).length > 0 ? { askedBy } : {}
 }

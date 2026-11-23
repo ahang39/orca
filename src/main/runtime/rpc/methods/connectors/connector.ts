@@ -13,6 +13,7 @@ import { defineMethod } from '../../core'
 import { botTurnFor } from '../../../../bots/bot-turn-for'
 import { sessionCallerOf } from '../../../orchestration/addressing/orchestration-caller-identity'
 import { CONNECTOR_ACT_METHOD } from '../connector-act'
+import { connectorPostAttempts } from '../../../../external-conversations/connector-post-attempts'
 import { CONNECTOR_REACT_METHOD } from '../connector-react'
 
 export function requireSeam(
@@ -33,9 +34,8 @@ export const CONNECTOR_METHODS = [
     params: ConnectorReply,
     handler: async (params, context) => {
       const { replyId, text, review } = params
-      const target = requireSeam(context.runtime).replyTarget(
-        'paneKey' in params ? params.paneKey : chatPaneKey(params.sessionId)
-      )
+      const paneKey = 'paneKey' in params ? params.paneKey : chatPaneKey(params.sessionId)
+      const target = requireSeam(context.runtime).replyTarget(paneKey)
       if (!target) {
         throw new Error('not_a_cloud_conversation')
       }
@@ -70,6 +70,7 @@ export const CONNECTOR_METHODS = [
         cloud?.cloudFeatures()?.has(CONNECTOR_REPLIES_OUTBOX_FEATURE) === true
           ? { answerDeliveryId: target.answerDeliveryId }
           : {}
+      connectorPostAttempts.note(paneKey, 'here')
       const sent = await cloud?.reply({
         replyId,
         conversation,

@@ -10,9 +10,9 @@ import {
 import type { AgentSessionFailureFact } from '../../shared/agent-session/failures/agent-session-failure'
 import {
   latestStructuredAgentSessionAssistantMessage,
-  latestStructuredAgentSessionFailure,
-  structuredAgentSessionTurnReply
+  latestStructuredAgentSessionFailure
 } from '../../shared/agent-session/requests/structured-agent-session-latest-request'
+import { structuredAgentSessionTurnReply } from '../../shared/agent-session/requests/structured-agent-session-turn-reply'
 import type { ConversationChat } from './external-conversation-chat'
 import {
   endedChatTurnRow,

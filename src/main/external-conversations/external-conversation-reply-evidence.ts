@@ -129,6 +129,7 @@ export async function readReplyEvidence(
     const opener = turn?.userItemId ?? agentJournalSubmissionKey(cutTurnId)
     return snapshot.items.find((item) => item.itemId === opener)
   }
+  const cutVerdicts = new Map<string, ReturnType<typeof turnVerdictOf>>()
   // A claimed row's end, read from the continuation that claimed it (Phase 1 §1.7); null waits.
   const claimVerdict = (claimMessageId: string): ReplyRecoveryVerdict | null => {
     const turn = turnOpenedBy(claimMessageId)
@@ -155,6 +156,14 @@ export async function readReplyEvidence(
     turnOpenedBy,
     cutOpener,
     claimVerdict,
+    // Once per cut per read: every row a retry held names the same one.
+    cutTurnVerdict: (cutTurnId: string) => {
+      if (!cutVerdicts.has(cutTurnId)) {
+        const row = turnRowOf(cutTurnId)
+        cutVerdicts.set(cutTurnId, row ? turnVerdictOf(row) : null)
+      }
+      return cutVerdicts.get(cutTurnId) ?? null
+    },
     // Only turns that could have answered a row still unfilled.
     turns: () => {
       const placed = rows.map((row) => messageOf(row)?.sequence ?? 0).filter((at) => at > 0)
@@ -252,6 +261,11 @@ export function rowVerdict(
     return endedCuts.has(row.cut.turnId)
       ? { outcome: 'failed', ...(row.cutFailure ? { failure: row.cutFailure } : {}) }
       : null
+  }
+  // Held for an empty turn's retry that never claimed it (refused, or the app quit first): that
+  // turn finished, with nothing to say.
+  if (row.emptyRetried && row.cut && view.cutTurnVerdict(row.cut.turnId) === 'success') {
+    return { outcome: 'no_answer' }
   }
   if (row.cut) {
     return settled ? { outcome: 'interrupted' } : null

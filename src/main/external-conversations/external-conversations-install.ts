@@ -27,6 +27,9 @@ import {
   type ConversationReplyFill
 } from './external-conversation-reply-fill'
 import { usageLimitReplyPause } from './external-conversation-reply-pause'
+import { emptyRetrySend, emptyTurnRetry } from './external-conversation-reply-empty-retry'
+import { connectorPostAttempts } from './connector-post-attempts'
+import { chatPaneKey } from './external-conversation-chat'
 import { ConnectorReplyRecovery } from './external-conversation-reply-recovery'
 import type { OrchestrationDb } from '../runtime/orchestration/db/orchestration-db'
 import { canonicalOrcaSessionId } from '../runtime/orchestration/addressing/session-lineage/canonical-orca-session-id'
@@ -189,13 +192,22 @@ function connectorReplyOutbox(
   const filled = () => runtime.getConnectorCloud?.()?.repliesFilled()
   const usageLimitDisposition = async (sessionId: string, turnItemId: string) =>
     getStructuredAgentSessionHost()?.usageLimitContinue.disposition(sessionId, turnItemId)
+  // Recovery is made below; a retry's send settles only after both exist.
+  let settleRetry: (sessionId: string) => void = () => {}
+  const retry = emptyTurnRetry({
+    journal,
+    postedSince: (sessionId, at) => connectorPostAttempts.takeSince(chatPaneKey(sessionId), at),
+    send: emptyRetrySend(getStructuredAgentSessionHost),
+    settled: (sessionId) => settleRetry(sessionId)
+  })
   const fill = conversationReplyFill(
     journal,
     filled,
     usageLimitReplyPause(journal, usageLimitDisposition, async (sessionId) => {
       const shown = await getStructuredAgentSessionHost()?.readUsageLimitContinue(sessionId)
       return shown?.state === 'scheduled' ? (shown.continueAt ?? shown.resetsAt) : undefined
-    })
+    }),
+    retry
   )
   const recovery = new ConnectorReplyRecovery({
     journal,
@@ -208,11 +220,13 @@ function connectorReplyOutbox(
     fillTurn: fill,
     filled,
     usageLimitDisposition,
+    retrySending: retry.sending,
     // This start's own continuations of restart cuts claim first; whatever they left closes then.
     ...(runtime.structuredAgentSessionLaunchContinuation
       ? { continuationsSettled: runtime.structuredAgentSessionLaunchContinuation.continued }
       : {})
   })
+  settleRetry = (sessionId) => recovery.turnEnded(sessionId)
   setConnectorClaimSource((sessionId, cut) => recovery.claimFor(sessionId, cut))
   let unwatchStatus: (() => void) | undefined
   let unwatchPauses: (() => void) | undefined
