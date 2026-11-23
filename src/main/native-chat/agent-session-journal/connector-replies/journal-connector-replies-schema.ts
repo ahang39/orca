@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS journal_connector_replies (
   cut_turn_id TEXT,
   cut_kind TEXT,
   claim_message_id TEXT,
+  tools_ran INTEGER,
   PRIMARY KEY(account, delivery_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS journal_connector_replies_open
@@ -35,13 +36,14 @@ CREATE INDEX IF NOT EXISTS journal_connector_replies_open
 
 // Columns later builds added the same way, with no user_version change: an older build never reads
 // them. turn_started_at: the answering turn's turn-started `at`, which its reply names. cut_turn_id / cut_kind: the cut that owes the row; claim_message_id: the continuation that
-// claimed it.
+// claimed it. tools_ran: a turn done without an answer ran a tool call.
 const ADDED_COLUMNS = [
   ['took_ms', 'INTEGER'],
   ['turn_started_at', 'INTEGER'],
   ['cut_turn_id', 'TEXT'],
   ['cut_kind', 'TEXT'],
-  ['claim_message_id', 'TEXT']
+  ['claim_message_id', 'TEXT'],
+  ['tools_ran', 'INTEGER']
 ] as const
 
 /** Creates the table, and adds the columns a table an earlier build made lacks. */
