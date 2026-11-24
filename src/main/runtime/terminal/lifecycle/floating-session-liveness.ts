@@ -100,7 +100,8 @@ export abstract class OrcaRuntimeWithRefreshFloatingWorkspacePtyLiveness extends
     )
     if (retained.length > DISCONNECTED_PTY_RECORD_MAX) {
       // An open slept pane's handle still names its stopped process; that archive goes with the pane.
-      retained = retained.filter((pty) => !this.isSleptPanePty(pty.ptyId))
+      const slept = this.sleptPanePtyIds()
+      retained = retained.filter((pty) => !slept.has(pty.ptyId))
     }
     retained.sort((a, b) => (a.disconnectedAt ?? 0) - (b.disconnectedAt ?? 0))
     const staleCount = Math.max(0, retained.length - DISCONNECTED_PTY_RECORD_MAX)
@@ -110,15 +111,17 @@ export abstract class OrcaRuntimeWithRefreshFloatingWorkspacePtyLiveness extends
     }
   }
 
-  /** A stopped process whose handle a processless pane still holds: only a sleep keeps it so. */
-  private isSleptPanePty(ptyId: string): boolean {
-    const handle = this.handleByPtyId.get(ptyId)
-    const record = handle ? this.handles.get(handle) : undefined
-    if (!handle || record?.ptyId !== ptyId) {
-      return false
+  /** Stopped processes whose handles processless panes still hold: only a sleep keeps them so. */
+  private sleptPanePtyIds(): Set<string> {
+    const ptyIds = new Set<string>()
+    for (const [leafKey, leaf] of this.leaves) {
+      const handle = leaf.ptyId === null ? this.handleByLeafKey.get(leafKey) : undefined
+      const ptyId = handle ? this.handles.get(handle)?.ptyId : null
+      if (ptyId) {
+        ptyIds.add(ptyId)
+      }
     }
-    const leafKey = this.getLeafKey(record.tabId, record.leafId)
-    return this.leaves.get(leafKey)?.ptyId === null && this.handleByLeafKey.get(leafKey) === handle
+    return ptyIds
   }
 
   protected dropDisconnectedPtyRecord(ptyId: string): void {

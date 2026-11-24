@@ -51,10 +51,7 @@ import { structuredMailboxCustody } from '../orchestration/mailbox/routing/struc
 
 export abstract class OrcaRuntimeWithStopRequestedPtyIds extends OrcaRuntimeWithAgentOrchestrationDependencies {
   protected abstract isSleptAgentLeaf(leaf: RuntimeLeafRecord): boolean
-  protected abstract unmountedSleptAgents(
-    worktreeId?: string,
-    handles?: readonly string[]
-  ): Iterable<RuntimeLeafRecord>
+  protected abstract unmountedSleptAgents(worktreeId?: string): Iterable<RuntimeLeafRecord>
   protected readonly stopRequestedPtyIds = new Set<string>()
 
   protected readonly ptyExitListenersByPtyId = new Map<string, Set<() => void>>()
@@ -145,7 +142,7 @@ export abstract class OrcaRuntimeWithStopRequestedPtyIds extends OrcaRuntimeWith
     buildHostScope: (targetWorktreeId, terminals, worktrees, queriedHostIds) =>
       this.buildTerminalListHostScope(targetWorktreeId, terminals, worktrees, queriedHostIds),
     isSleptAgentLeaf: (leaf) => this.isSleptAgentLeaf(leaf),
-    unmountedSleptAgents: (worktreeId, handles) => this.unmountedSleptAgents(worktreeId, handles),
+    unmountedSleptAgents: (worktreeId) => this.unmountedSleptAgents(worktreeId),
     ...(ORCA_LAYOUT_OWNER_IS_MAIN ? { listsEveryPane: (id) => mainListsEveryPane(this, id) } : {})
   })
 

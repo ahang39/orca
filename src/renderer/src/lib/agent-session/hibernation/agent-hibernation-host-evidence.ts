@@ -63,8 +63,7 @@ export function resolveAgentHibernationRuntimeOwner(
 /** Worktree → owning runtime; `null` means liveness is required but no host can be asked. */
 export function getRuntimeLivenessTargetWorktrees(
   state: AppState,
-  targetWorktreeId?: string,
-  targetOwner?: AgentHibernationRuntimeOwner
+  targetWorktreeId?: string
 ): Map<string, string | null> {
   const targets = new Map<string, string | null>()
   const worktreeIds = targetWorktreeId
@@ -73,7 +72,7 @@ export function getRuntimeLivenessTargetWorktrees(
       : []
     : Object.keys(state.tabsByWorktree)
   for (const worktreeId of worktreeIds) {
-    const owner = targetOwner ?? resolveAgentHibernationRuntimeOwner(state, worktreeId)
+    const owner = resolveAgentHibernationRuntimeOwner(state, worktreeId)
     if (owner.kind !== 'non-runtime') {
       targets.set(worktreeId, owner.kind === 'runtime' ? owner.environmentId : null)
     }
@@ -95,10 +94,9 @@ function getTypedRuntimePtyId(terminal: RuntimeTerminalSummary): string | null {
 export async function collectHostPtyEvidence(
   state: AppState,
   targetWorktreeId?: string,
-  onlyPaneKey?: string,
-  targetOwner?: AgentHibernationRuntimeOwner
+  onlyPaneKey?: string
 ): Promise<HostPtyEvidence> {
-  const targets = getRuntimeLivenessTargetWorktrees(state, targetWorktreeId, targetOwner)
+  const targets = getRuntimeLivenessTargetWorktrees(state, targetWorktreeId)
   const runtimeLivePtyIdsByWorktreeId: Record<string, string[]> = {}
   const runtimeLivenessRequiredWorktreeIds = [...targets.keys()]
   const attentionByWorktreeId: HostPtyEvidence['attentionByWorktreeId'] = {}

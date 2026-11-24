@@ -55,10 +55,7 @@ type RuntimeTerminalListDependencies = {
   /** Agent Sleep stopped this pane's process; it is listed as the idle agent it stands for. */
   isSleptAgentLeaf: (leaf: RuntimeLeafRecord) => boolean
   /** Slept agents whose tab the window hasn't mounted, listed under the handle their record saved. */
-  unmountedSleptAgents: (
-    worktreeId?: string,
-    handles?: readonly string[]
-  ) => Iterable<RuntimeLeafRecord>
+  unmountedSleptAgents: (worktreeId?: string) => Iterable<RuntimeLeafRecord>
 }
 
 export class RuntimeTerminalList {
@@ -150,7 +147,7 @@ export class RuntimeTerminalList {
         terminals.push(this.deps.buildLeafSummary(leaf, worktreesById, provenLivePtyIds))
       }
       if (!opts.requireFreshPtyLiveness) {
-        for (const leaf of this.deps.unmountedSleptAgents(targetId ?? undefined, opts.handles)) {
+        for (const leaf of this.deps.unmountedSleptAgents(targetId ?? undefined)) {
           if (!targetId || leaf.worktreeId === targetId) {
             terminals.push(this.deps.buildLeafSummary(leaf, worktreesById, provenLivePtyIds))
           }
