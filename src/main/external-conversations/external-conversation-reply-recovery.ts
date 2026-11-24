@@ -227,7 +227,7 @@ export class ConnectorReplyRecovery {
     })
     const heads = heldHeads(
       fills.flatMap(({ row, verdict }) => (verdict.outcome === 'no_answer' ? [row] : [])),
-      view
+      snapshot.items
     )
     await journal.fillOutcomes(
       fills.map(({ row, verdict }) => ({

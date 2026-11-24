@@ -1,12 +1,21 @@
 import { randomUUID } from 'node:crypto'
-import type { AgentJournalMessageItem } from '../../shared/agent-session/journal/agent-session-journal-types'
+import type {
+  AgentJournalMessageItem,
+  AgentJournalRenderItem
+} from '../../shared/agent-session/journal/agent-session-journal-types'
 import type { JournalConnectorReplyRow } from '../../shared/agent-session/journal/journal-connector-reply'
 import { connectorReplyTurnOutcome } from '../../shared/agent-session/journal/journal-connector-reply-turn'
 import { structuredAgentSessionMessageSendMutation } from '../../shared/agent-session/requests/structured-agent-session-send-mutation'
 import { BOT_QUIET_MARKER } from '../../shared/bot-quiet-result'
 import { createStructuredAgentSessionOperationId } from '../../shared/agent-session/lifecycle/operations/structured-agent-session-mutation'
 import type { ConnectorReplyCutJournal } from '../connector-cloud/connector-reply-outbox'
-import { callerFor, chatIsIdle, type ConversationChat } from './external-conversation-chat'
+import {
+  callerFor,
+  chatIsIdle,
+  envelope,
+  type ConversationChat
+} from './external-conversation-chat'
+import type { StructuredAgentSessionHost } from '../native-chat/agent-session-wire/host/structured-agent-session-host'
 import type { EndedTurnReplies } from './external-conversation-reply-fill'
 
 // A bot's Slack request whose turn succeeded with nothing written after its last tool call is asked
@@ -117,7 +126,7 @@ export function emptyTurnRetry(deps: {
  *  would take it in as a steer, and a newer one would be the turn it asks about. A continuation, so
  *  no Slack mirror posts it as the owner's. */
 export function emptyRetrySend(
-  chat: () => ConversationChat | null,
+  chat: () => (ConversationChat & Pick<StructuredAgentSessionHost, 'queuedMessageDelete'>) | null,
   /** Connectors turned off: nothing is sent, and the next recovery closes what was held. */
   signal: AbortSignal
 ): EmptyRetrySend {
@@ -158,7 +167,22 @@ export function emptyRetrySend(
           admitted = true
         }
       })
-      return sent.ok ? 'accepted' : 'refused'
+      if (!sent.ok) {
+        return 'refused'
+      }
+      // Queued behind a waiting card, it would run in a later turn: take it back, which hands its
+      // claim back to the cut, so recovery closes the request with no answer.
+      if ('queued' in sent.value) {
+        const fields = { messageId: sent.value.clientMessageId }
+        const withdrawal = envelope(host, { sessionId }, 'agentSession.queuedMessageDelete', fields)
+        const withdrawn =
+          withdrawal &&
+          (await host
+            .queuedMessageDelete(callerFor({ sessionId }), { envelope: withdrawal, ...fields })
+            .catch(() => null))
+        return withdrawn?.ok ? 'refused' : 'unknown'
+      }
+      return 'accepted'
     } catch {
       return admitted ? 'unknown' : 'refused'
     }
@@ -166,17 +190,30 @@ export function emptyRetrySend(
 }
 
 /** Rows an empty turn held for its retry share one answer per conversation, as its live fill would
- *  have keyed them: the earliest admitted. Each row's message is looked up once. */
+ *  have keyed them: the earliest admitted, by one pass over the read's messages. */
 export function heldHeads(
   rows: readonly JournalConnectorReplyRow[],
-  view: { messageOf: (row: JournalConnectorReplyRow) => { sequence: number } | undefined }
+  items: readonly AgentJournalRenderItem[]
 ): Map<JournalConnectorReplyRow, string> {
+  const held = rows.filter((row) => row.emptyRetried && row.cut)
+  if (held.length === 0) {
+    return new Map()
+  }
+  const admittedAt = new Map<string, number>()
+  for (const item of items) {
+    const delivery = item.body.kind === 'message' ? item.body.connectorDelivery : undefined
+    for (const deliveryId of delivery ? [delivery.deliveryId, ...(delivery.carried ?? [])] : []) {
+      const key = keyOf({ account: delivery!.account, deliveryId })
+      if (!admittedAt.has(key)) {
+        admittedAt.set(key, item.sequence)
+      }
+    }
+  }
   const groupOf = (row: JournalConnectorReplyRow) =>
     JSON.stringify([row.cut?.turnId, row.account, row.conversation])
   const first = new Map<string, { row: JournalConnectorReplyRow; at: number }>()
-  const held = rows.filter((row) => row.emptyRetried && row.cut)
   for (const row of held) {
-    const at = view.messageOf(row)?.sequence ?? Number.MAX_SAFE_INTEGER
+    const at = admittedAt.get(keyOf(row)) ?? Number.MAX_SAFE_INTEGER
     const known = first.get(groupOf(row))
     if (!known || at < known.at) {
       first.set(groupOf(row), { row, at })
