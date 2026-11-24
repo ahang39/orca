@@ -33,6 +33,7 @@ import { resolveProviderExecPath } from '../provider-process/provider-exec-path'
 import { withTimeout } from '../../shared/concurrency/promise-timeout-fallback'
 import { providerRelayChannel, type ProviderRelayChannel } from './provider-relay-channel'
 import { RelayedProviderChild } from './relayed-provider-child'
+import type { ProviderRelayAckFloor } from './relayed-provider-output'
 import { relayedManagedProcess } from './relayed-managed-process'
 
 /** Desktop composition installs this on macOS and Linux; anywhere else chats launch as before. */
@@ -67,6 +68,8 @@ export type ProviderRelayLaunch = {
   passWhileHeld?: (line: string) => boolean
   /** The agent's whole environment, when its caller already scrubbed it (not merged over the app's). */
   inheritedEnv?: Record<string, string>
+  /** Where a later attach must replay from (a message still streaming); acks never pass it. */
+  ackFloor?: () => ProviderRelayAckFloor
   /** `spawn`: a still-listed kept agent refuses the start (its reattach is the caller's own). */
   only?: 'spawn' | 'reattach'
 }
@@ -218,6 +221,7 @@ function relayedChild(
     policy: () => policyFor(launch.markers),
     quitting: providerRelayQuitting,
     durable: (force) => durableFor?.(launch.chatKey, force) ?? Promise.resolve(true),
+    ...(launch.ackFloor ? { ackFloor: launch.ackFloor() } : {}),
     ...(passWhileHeld ? { passWhileHeld } : {})
   })
 }

@@ -14,6 +14,15 @@ type OutputOptions = {
    */
   durable?: (force: boolean) => Promise<boolean>
   ack: (seq: number) => Promise<unknown>
+  /** Sees each line handed on; acks never pass the seq it names, so a later attach replays from there. */
+  ackFloor?: ProviderRelayAckFloor
+}
+
+/** A provider's own replay boundary, such as the start of a message still being streamed. */
+export type ProviderRelayAckFloor = {
+  observe: (seq: number, line: string) => void
+  /** The highest seq that may be acked; null when nothing holds it back. */
+  ceiling: () => number | null
 }
 
 /**
@@ -34,6 +43,8 @@ export class RelayedProviderOutput {
   private ackTimer: ReturnType<typeof setTimeout> | null = null
   private acking: Promise<void> = Promise.resolve()
   private stopped = false
+  /** The agent ended: everything it said is acked, so the daemon can drop the relay. */
+  private final = false
 
   constructor(private readonly options: OutputOptions) {
     this.held = options.passWhileHeld ? [] : null
@@ -87,6 +98,12 @@ export class RelayedProviderOutput {
     return this.ack(force)
   }
 
+  /** The agent ended: everything it said is acked past any floor, so the daemon can drop it. */
+  finish(): Promise<void> {
+    this.final = true
+    return this.settle(true)
+  }
+
   /** No more acks: the relay was handed off. */
   stop(): void {
     this.stopped = true
@@ -113,6 +130,9 @@ export class RelayedProviderOutput {
 
   private push(seq: number | null, line: string | null): void {
     if (line) {
+      if (seq !== null) {
+        this.options.ackFloor?.observe(seq, line)
+      }
       this.options.stdout.push(`${line}\n`)
     }
     if (seq !== null && seq > this.pushedSeq) {
@@ -141,7 +161,8 @@ export class RelayedProviderOutput {
 
   private ack(force = false): Promise<void> {
     this.acking = this.acking.then(async () => {
-      const target = this.pushedSeq
+      const ceiling = this.final ? null : (this.options.ackFloor?.ceiling() ?? null)
+      const target = ceiling === null ? this.pushedSeq : Math.min(this.pushedSeq, ceiling)
       if (target <= this.ackedSeq || this.stopped) {
         return
       }
