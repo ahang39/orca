@@ -141,8 +141,18 @@ export function emptyRetrySend(
           body
         }),
         continuation: true,
-        beforeRun: () => {
-          if (!ready()) {
+        // Under the chat's admission, from its journal rather than its last published status: a
+        // message that reached it meanwhile, or a newer turn, refuses the ask.
+        beforeRun: async () => {
+          const work = await host.currentWork(sessionId)
+          if (
+            signal.aborted ||
+            !work ||
+            work.working() ||
+            work.owesAnySend() ||
+            work.hasActionablePrompt() ||
+            work.publishedLatestTurn(null)?.itemId !== turnItemId
+          ) {
             throw new Error('chat_moved_on')
           }
           admitted = true
@@ -156,27 +166,21 @@ export function emptyRetrySend(
 }
 
 /** Rows an empty turn held for its retry share one answer per conversation, as its live fill would
- *  have keyed them: the earliest admitted. */
+ *  have keyed them: the earliest admitted. Each row's message is looked up once. */
 export function heldHeads(
   rows: readonly JournalConnectorReplyRow[],
   view: { messageOf: (row: JournalConnectorReplyRow) => { sequence: number } | undefined }
 ): Map<JournalConnectorReplyRow, string> {
-  const at = (row: JournalConnectorReplyRow) =>
-    view.messageOf(row)?.sequence ?? Number.MAX_SAFE_INTEGER
-  const first = new Map<string, JournalConnectorReplyRow>()
-  for (const row of rows) {
-    const key = JSON.stringify([row.cut?.turnId, row.account, row.conversation])
-    const known = first.get(key)
-    if (row.emptyRetried && row.cut && (!known || at(row) < at(known))) {
-      first.set(key, row)
+  const groupOf = (row: JournalConnectorReplyRow) =>
+    JSON.stringify([row.cut?.turnId, row.account, row.conversation])
+  const first = new Map<string, { row: JournalConnectorReplyRow; at: number }>()
+  const held = rows.filter((row) => row.emptyRetried && row.cut)
+  for (const row of held) {
+    const at = view.messageOf(row)?.sequence ?? Number.MAX_SAFE_INTEGER
+    const known = first.get(groupOf(row))
+    if (!known || at < known.at) {
+      first.set(groupOf(row), { row, at })
     }
   }
-  const heads = new Map<JournalConnectorReplyRow, string>()
-  for (const row of rows) {
-    const head = first.get(JSON.stringify([row.cut?.turnId, row.account, row.conversation]))
-    if (row.emptyRetried && head) {
-      heads.set(row, head.deliveryId)
-    }
-  }
-  return heads
+  return new Map(held.map((row) => [row, first.get(groupOf(row))!.row.deliveryId]))
 }

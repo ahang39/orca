@@ -23,14 +23,16 @@ export function structuredAgentSessionTurnReply(
       if (isRootAgentJournalItem(item)) {
         botProse ??= ''
       }
-      continue
-    }
-    if (!prose) {
+    } else if (!prose) {
       const said = rootAssistantProse(item)
       if (said.trim()) {
         prose = said
         botProse ??= said
       }
+    }
+    // Every answer is known: nothing earlier changes it.
+    if (prose && botProse !== null && toolsRan) {
+      break
     }
   }
   return { prose, botProse: botProse ?? '', toolsRan }
