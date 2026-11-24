@@ -147,7 +147,8 @@ function reportHttpLinkBrowserOpenFailure(error: unknown): void {
   )
 }
 
-async function openSystemHttpLink(url: string): Promise<void> {
+/** The one renderer route to the system browser for an address already resolved for it. */
+export async function openSystemHttpLink(url: string): Promise<void> {
   try {
     await window.api.shell.openUrl(url)
   } catch {
