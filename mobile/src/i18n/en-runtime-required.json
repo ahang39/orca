@@ -1092,6 +1092,22 @@
       "sessionLost": "Dictation lost its connection to the computer. Try again."
     }
   },
+  "home": {
+    "bots": {
+      "groupMembers_one": "{{count}} member",
+      "groupMembers_other": "{{count}} members",
+      "waits": {
+        "access_one": "access request",
+        "access_other": "{{count}} access requests",
+        "items_one": "item",
+        "items_other": "{{count}} items",
+        "questions_one": "question",
+        "questions_other": "{{count}} questions",
+        "workers_one": "worker",
+        "workers_other": "{{count}} workers"
+      }
+    }
+  },
   "hostScreen": {
     "deleteConfirm": {
       "changes_one": "{{count}} uncommitted change",
