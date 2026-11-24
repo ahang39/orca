@@ -35,7 +35,6 @@ import type { ConnectorReplyCutJournal } from '../connector-cloud/connector-repl
 import { conversationReplyFill } from './external-conversation-reply-fill'
 import { usageLimitReplyPause } from './external-conversation-reply-pause'
 import { emptyTurnRetry, type EmptyRetrySend } from './external-conversation-reply-empty-retry'
-import type { ConnectorPostAttempt } from './connector-post-attempts'
 import { ConnectorReplyRecovery } from './external-conversation-reply-recovery'
 import { connectorReplyTurnStamps } from '../../shared/agent-session/journal/journal-connector-reply-turn'
 import { replyEventsOf } from '../connector-cloud/connector-reply-outbox'
@@ -159,7 +158,7 @@ function start(
     /** A bot's chat: its quiet marker counts. */
     bot?: boolean
     /** An empty turn's retry: whether the chat tried a post itself, and how its ask's send goes. */
-    retry?: { posted?: ConnectorPostAttempt; send: EmptyRetrySend }
+    retry?: { posted?: boolean; send: EmptyRetrySend }
   } = {}
 ) {
   const { bot = false, retry: retrying, ...recoveryOptions } = options
@@ -186,7 +185,7 @@ function start(
     retrying &&
     emptyTurnRetry({
       journal: () => journal,
-      postedSince: () => retrying.posted ?? null,
+      postedSince: () => retrying.posted === true,
       send: retrying.send,
       settled: (sessionId) => recovery.turnEnded(sessionId)
     })
@@ -795,17 +794,13 @@ describe('an empty turn is asked once more, from its live end only', () => {
     expect(p.outcomes()).toEqual({ d1: { outcome: 'no_answer', head: 'd1', toolsRan: true } })
   })
 
-  // A confirmed reply into its own thread is the turn's answer; any other try still owes one.
-  it.each([
-    ['attempted', 'no_answer'],
-    ['answered', 'quiet']
-  ] as const)('never asks when the chat’s post in the turn was %s', async (posted, outcome) => {
-    const p = start({ bot: true, retry: { posted, send: send('accepted') } })
+  it('never asks when the chat tried a post of its own in the turn', async () => {
+    const p = start({ bot: true, retry: { posted: true, send: send('accepted') } })
     admit(p.db, 'm1', asked('d1'))
     p.show([p.message('m1'), ...p.turn('item:t1', 'm1', 'completed')])
     await liveEnd(p, 'item:t1', 'm1', false)
     expect(asks).toHaveLength(0)
-    expect(p.outcomes()).toEqual({ d1: { outcome, head: 'd1' } })
+    expect(p.outcomes()).toEqual({ d1: { outcome: 'no_answer', head: 'd1' } })
   })
 
   it('keeps the root’s answer when a child’s tool call lands after it', async () => {

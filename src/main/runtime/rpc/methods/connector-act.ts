@@ -259,11 +259,6 @@ export const CONNECTOR_ACT_METHOD = defineMethod({
         botName: bot.name
       })
     }
-    // A reply posted into the thread that woke the run is the turn's answer there; staging a file
-    // posts nothing yet.
-    if (verb === 'reply' && answer.value.ok && !args.upload && !args.stream) {
-      connectorPostAttempts.answered(chatPaneKey(sessionId))
-    }
     if (verb === 'post' && answer.value.ok) {
       // Before the bot's next command, so a reply right after it knows the answer is already posted.
       await noteBotRequestPost(runtime, sessionId, ref).catch((error: unknown) =>

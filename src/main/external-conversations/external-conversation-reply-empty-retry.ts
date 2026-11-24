@@ -8,7 +8,6 @@ import { createStructuredAgentSessionOperationId } from '../../shared/agent-sess
 import type { ConnectorReplyCutJournal } from '../connector-cloud/connector-reply-outbox'
 import { callerFor, chatIsIdle, type ConversationChat } from './external-conversation-chat'
 import type { EndedTurnReplies } from './external-conversation-reply-fill'
-import type { ConnectorPostAttempt } from './connector-post-attempts'
 
 // A bot's Slack request whose turn succeeded with nothing written after its last tool call is asked
 // once more, in the same chat, before the thread is told there was no answer. Only a live turn end
@@ -27,12 +26,8 @@ export type EmptyRetrySend = (
 ) => Promise<'accepted' | 'refused' | 'unknown'>
 
 export type EmptyTurnRetry = {
-  /** Holds an empty turn's rows for its one retry and sends it. `posted`: the turn's confirmed reply
-   *  into its own conversation is its answer, so it closes quiet. False fills them as they are. */
-  hold: (
-    turn: EndedTurnReplies,
-    own: readonly JournalConnectorReplyRow[]
-  ) => Promise<'held' | 'posted' | false>
+  /** Holds an empty turn's rows for its one retry and sends it; false fills them as they are. */
+  hold: (turn: EndedTurnReplies, own: readonly JournalConnectorReplyRow[]) => Promise<boolean>
   /** A row held for a retry not yet sent: recovery leaves it. */
   sending: (row: Pick<JournalConnectorReplyRow, 'account' | 'deliveryId'>) => boolean
 }
@@ -42,8 +37,8 @@ const keyOf = (row: Pick<JournalConnectorReplyRow, 'account' | 'deliveryId'>) =>
 
 export function emptyTurnRetry(deps: {
   journal: () => ConnectorReplyCutJournal | null
-  /** Where the chat tried to post into Slack itself since `at` (ConnectorPostAttempts). */
-  postedSince: (sessionId: string, at: number) => ConnectorPostAttempt | null
+  /** Whether the chat tried to post into Slack itself since `at` (ConnectorPostAttempts). */
+  postedSince: (sessionId: string, at: number) => boolean
   send: EmptyRetrySend
   /** The ask is settled: recovery reads the rows again (a refused ask closes them as no answer). */
   settled: (sessionId: string) => void
@@ -63,11 +58,10 @@ export function emptyTurnRetry(deps: {
       ) {
         return false
       }
-      const posted = deps.postedSince(turn.sessionId, turn.turnStartedAt)
-      if (posted === 'answered') {
-        return 'posted'
-      }
-      if (posted || own.some((row) => row.emptyRetried)) {
+      if (
+        deps.postedSince(turn.sessionId, turn.turnStartedAt) ||
+        own.some((row) => row.emptyRetried)
+      ) {
         return false
       }
       const keys = own.map(keyOf)
@@ -114,7 +108,7 @@ export function emptyTurnRetry(deps: {
           release()
           deps.settled(turn.sessionId)
         })
-      return 'held'
+      return true
     }
   }
 }
@@ -122,11 +116,16 @@ export function emptyTurnRetry(deps: {
 /** The ask, sent only into an idle chat whose newest turn is still the empty one: a running turn
  *  would take it in as a steer, and a newer one would be the turn it asks about. A continuation, so
  *  no Slack mirror posts it as the owner's. */
-export function emptyRetrySend(chat: () => ConversationChat | null): EmptyRetrySend {
+export function emptyRetrySend(
+  chat: () => ConversationChat | null,
+  /** Connectors turned off: nothing is sent, and the next recovery closes what was held. */
+  signal: AbortSignal
+): EmptyRetrySend {
   return async (sessionId, body, turnItemId) => {
     const host = chat()
     const record = host?.deps.store.getConversation(sessionId)
     const ready = () =>
+      !signal.aborted &&
       chatIsIdle(host, sessionId) &&
       host?.publishedWork(sessionId)?.latestTurn?.itemId === turnItemId
     if (!host || !record || !ready()) {

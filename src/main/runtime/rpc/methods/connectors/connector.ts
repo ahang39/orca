@@ -88,7 +88,6 @@ export const CONNECTOR_METHODS = [
           sent.error === 'not_this_hosts_thread' ? 'not_this_hosts_thread' : 'connector_unavailable'
         )
       }
-      connectorPostAttempts.answered(paneKey)
       return { ...sent.value, place: target.place }
     }
   }),

@@ -116,18 +116,12 @@ export function conversationReplyFill(
     if (paused) {
       return { covered, paused: true, ...paused }
     }
-    const held = await retry?.hold(turn, own)
-    if (held === 'held') {
+    if (await retry?.hold(turn, own)) {
       return { covered, paused: false }
     }
     const fills: JournalConnectorReplyFill[] = []
     for (const row of own) {
-      const reading = connectorReplyTurnOutcome(turn)
-      // A turn that posted into its conversation itself answered there.
-      const { outcome, prose } =
-        held === 'posted' && reading.outcome === 'no_answer'
-          ? { outcome: 'quiet' as const }
-          : reading
+      const { outcome, prose } = connectorReplyTurnOutcome(turn)
       const conversation = JSON.stringify([row.account, row.conversation])
       const answerDeliveryId = answers.get(conversation) ?? row.deliveryId
       fills.push({

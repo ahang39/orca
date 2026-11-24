@@ -150,7 +150,7 @@ export async function endRepliedTurn(
     prose: (link.bot ? turn.turnBotProse : turn.turnProse) ?? '',
     toolsRan: turn.turnToolsRan === true,
     live: true,
-    ...askedByOf(turn.opener?.body),
+    ...askedByOf(turn.opener?.body, turn.stamps),
     bot: Boolean(link.bot),
     links: link.bot ? await links() : [],
     ...turnTimesOf(end.ended),
@@ -258,16 +258,22 @@ export function turnReply(link: ExternalConversationLink, turn: EndedChatTurn): 
   return link.bot && message && isQuietBotResult(message) ? undefined : message
 }
 
-/** Who asked a turn and through what, as its opener carries it. */
-function askedByOf(body: AgentJournalItemBody | undefined): Pick<EndedTurnReplies, 'askedBy'> {
-  if (body?.kind !== 'message') {
-    return {}
+/** Who a retry of the turn asks for: its opener's asker when the opener carried every request the
+ *  turn answered; else someone Orca can't name (a connector message with no asker), never the owner. */
+function askedByOf(
+  body: AgentJournalItemBody | undefined,
+  stamps: readonly { deliveryId: string }[]
+): Pick<EndedTurnReplies, 'askedBy'> {
+  const opener = body?.kind === 'message' ? body : undefined
+  const { origin, asker, connectorConversation } = opener ?? {}
+  const own =
+    opener?.connectorDelivery !== undefined &&
+    stamps.every((stamp) => stamp.deliveryId === opener.connectorDelivery?.deliveryId)
+  return {
+    askedBy: {
+      origin: own && origin ? origin : 'connector',
+      ...(own && asker ? { asker } : {}),
+      ...(connectorConversation ? { connectorConversation } : {})
+    }
   }
-  const { origin, asker, connectorConversation } = body
-  const askedBy = {
-    ...(origin ? { origin } : {}),
-    ...(asker ? { asker } : {}),
-    ...(connectorConversation ? { connectorConversation } : {})
-  }
-  return Object.keys(askedBy).length > 0 ? { askedBy } : {}
 }
