@@ -1,8 +1,9 @@
-import type { ProviderRelayRecord } from '../protocol/daemon-provider-relay-protocol'
 import {
   leadingJsonEnvelope,
   type LeadingProperty
 } from '../../../shared/json-stream/json-rpc-record-prefix'
+import type { ProviderRelayRecord } from '../protocol/daemon-provider-relay-protocol'
+import { ProviderRelayKeptState } from './provider-relay-kept-state'
 
 type JsonObject = Record<string, unknown>
 
@@ -83,6 +84,8 @@ export class ProviderRelayPendingRequests {
   workMethods: ReadonlySet<string> = new Set()
   /** Those requests still unanswered, by id. */
   readonly working = new Set<string>()
+  /** Session state kept for the next attach, as `relaySpawn` named it. */
+  readonly kept = new ProviderRelayKeptState()
 
   get size(): number {
     return this.pending.size
@@ -97,6 +100,7 @@ export class ProviderRelayPendingRequests {
     this.working.clear()
     this.pending.clear()
     this.pendingChars = 0
+    this.kept.clear()
   }
 
   private hold(key: string, record: ProviderRelayRecord): void {
@@ -107,7 +111,10 @@ export class ProviderRelayPendingRequests {
 
   /** The agent is owed this many answers that it should wait for before saying more. */
   get full(): boolean {
-    return this.pending.size >= MAX_PENDING_REQUESTS || this.pendingChars >= MAX_PENDING_CHARS
+    return (
+      this.pending.size >= MAX_PENDING_REQUESTS ||
+      this.pendingChars + this.kept.chars >= MAX_PENDING_CHARS
+    )
   }
 
   private release(key: string): void {
@@ -124,6 +131,7 @@ export class ProviderRelayPendingRequests {
    * exactly as the client will read it.
    */
   observeAgentLine(record: ProviderRelayRecord): void {
+    this.kept.observeAgentLine(record)
     if (!this.mayClassify(record.line)) {
       return
     }
@@ -156,13 +164,14 @@ export class ProviderRelayPendingRequests {
       }
       if (key) {
         this.working.delete(key)
+        this.kept.observeAnswer(key, 'result' in message, record)
       }
     }
   }
 
   /** An answer this table waits for: the first initialize's, or a work request's. */
   private get awaitingAnswer(): boolean {
-    return this.awaitingInitialize || this.working.size > 0
+    return this.awaitingInitialize || this.working.size > 0 || this.kept.awaiting
   }
 
   private get awaitingInitialize(): boolean {
@@ -277,6 +286,7 @@ export class ProviderRelayPendingRequests {
       if (message.method === 'initialize' && this.initializeKey === null) {
         this.initializeKey = rpcId(message.id)
       }
+      this.kept.observeRequest(id, message.id, message.method)
       return null
     }
     if (message.type === 'control_request') {

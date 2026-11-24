@@ -101,4 +101,23 @@ describe('relayed provider output', () => {
     await asked
     expect(acks).toEqual([1])
   })
+
+  it('a held ack lets go when the daemon asks for one, so a full spool never stops the agent', async () => {
+    const { output, acks, releaseDurable } = rig()
+    output.restartAt(0)
+    output.line('relayData', 1, 'before')
+    const release = output.holdAcks()
+    output.line('relayData', 2, 'reply')
+    const settling = output.settle()
+    await releaseDurable()
+    await settling
+    // A graceful settle keeps the hold: the next app replays the reply.
+    expect(acks).toEqual([1])
+
+    const wanted = output.ackWanted()
+    await releaseDurable()
+    await wanted
+    expect(acks).toEqual([1, 2])
+    release()
+  })
 })

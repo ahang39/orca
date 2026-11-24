@@ -23,6 +23,10 @@ type OutputOptions = {
 export class RelayedProviderOutput {
   /** The agent's answer to the first client's `initialize`, when the relay was reattached. */
   initializeLine: string | null = null
+  /** Lines the daemon kept for this attach (session state long since acked), by seq. */
+  readonly keptLines = new Map<number, string>()
+  /** Once read, a later attach's kept lines (after a dropped stream) are not held again. */
+  private keptLinesRead = false
   /** Highest data seq handed on or held; spool lines at or below it are already seen. */
   private deliveredSeq = 0
   /** Highest data seq actually handed on; the next attach and every ack start here. */
@@ -31,6 +35,8 @@ export class RelayedProviderOutput {
   /** Requests already handed on, so a replay or reattach never asks the user twice. */
   private readonly deliveredPending = new Set<number>()
   private held: { seq: number | null; line: string }[] | null
+  /** Acks stop here while held: what follows is replayed to the next app (a compaction's reply). */
+  private ackCeiling: number | null = null
   private ackTimer: ReturnType<typeof setTimeout> | null = null
   private acking: Promise<void> = Promise.resolve()
   private stopped = false
@@ -48,6 +54,7 @@ export class RelayedProviderOutput {
     if (this.held) {
       this.held = []
     }
+    this.keptLines.clear()
     this.deliveredSeq = this.pushedSeq
     return this.pushedSeq
   }
@@ -58,6 +65,14 @@ export class RelayedProviderOutput {
     }
     if (event === 'relayInitialize') {
       this.initializeLine = line
+      return
+    }
+    // Only an attach whose output is held for its consumer reads kept lines: a fresh spawn's
+    // re-sent ones after a dropped stream are never read, so never held.
+    if (event === 'relayKept') {
+      if (this.wantsKeptLines) {
+        this.keptLines.set(seq, line)
+      }
       return
     }
     if (event === 'relayPending') {
@@ -73,12 +88,48 @@ export class RelayedProviderOutput {
     this.deliver(seq, this.deliveredPending.has(seq) ? null : line)
   }
 
-  release(): void {
+  /** Only an attach whose output is held for its consumer reads kept lines. */
+  get wantsKeptLines(): boolean {
+    return !this.keptLinesRead && this.held !== null
+  }
+
+  dropKeptLines(): void {
+    this.keptLinesRead = true
+    this.keptLines.clear()
+  }
+
+  /** `first` goes out ahead of the held lines: state the consumer rebuilt from kept lines. */
+  release(first: readonly string[] = []): void {
     const held = this.held
     this.held = null
+    for (const line of held ? first : []) {
+      this.push(null, line)
+    }
     for (const entry of held ?? []) {
       this.push(entry.seq, entry.line)
     }
+  }
+
+  /** Holds acks at what was handed on so far until the returned release; the spool cap bounds it. */
+  holdAcks(): () => void {
+    this.ackCeiling ??= this.pushedSeq
+    return () => {
+      this.ackCeiling = null
+      this.scheduleAck()
+    }
+  }
+
+  /**
+   * The daemon's spool is filling: a held ack would stop the agent's output and, with it, the
+   * answer that ends the hold. The hold goes (only that compaction's full-text judgement is lost).
+   */
+  ackWanted(): Promise<void> {
+    if (this.ackCeiling !== null) {
+      this.ackCeiling = null
+      console.warn('[provider-relay] released a held ack: the relay spool is filling')
+    }
+    // The ask saves live text first, as the base's ack-wanted does.
+    return this.settle(true)
   }
 
   /** Acks everything handed on now, after its durability barrier; `force` saves live text first. */
@@ -141,7 +192,7 @@ export class RelayedProviderOutput {
 
   private ack(force = false): Promise<void> {
     this.acking = this.acking.then(async () => {
-      const target = this.pushedSeq
+      const target = Math.min(this.pushedSeq, this.ackCeiling ?? Number.POSITIVE_INFINITY)
       if (target <= this.ackedSeq || this.stopped) {
         return
       }

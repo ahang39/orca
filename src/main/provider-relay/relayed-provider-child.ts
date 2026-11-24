@@ -103,6 +103,21 @@ export class RelayedProviderChild extends EventEmitter implements ProviderChild 
     return this.output.initializeLine
   }
 
+  /** Lines the daemon kept for this relay, by the seq they were spooled at; names are in `attachResult.kept`. */
+  get keptLines(): ReadonlyMap<number, string> {
+    return this.output.keptLines
+  }
+
+  /** Read once at reattach; a stream-drop reattach sends them again. */
+  /** Output from here on is replayed to the next app until the release (see the output's hold). */
+  holdAcks(): () => void {
+    return this.output.holdAcks()
+  }
+
+  dropKeptLines(): void {
+    this.output.dropKeptLines()
+  }
+
   get handedOff(): boolean {
     return this.state === 'detached'
   }
@@ -112,12 +127,14 @@ export class RelayedProviderChild extends EventEmitter implements ProviderChild 
     this.output.restartAt(fromSeq)
     this.unbind = this.options.channel.bind(this.relayId, {
       line: (event, seq, line) => this.output.line(event, seq, line),
-      ackWanted: () => void this.output.settle(true),
+      ackWanted: () => void this.output.ackWanted(),
       exit: (exit) => this.onExit(exit),
       disconnected: () => void this.reattach()
     })
     try {
-      const result = await this.options.channel.attach(this.relayId, fromSeq, this.options.policy())
+      const { channel } = this.options
+      const kept = this.output.wantsKeptLines
+      const result = await channel.attach(this.relayId, fromSeq, this.options.policy(), kept)
       this.attachResult = result
       if (this.state === 'attaching') {
         this.state = 'attached'
@@ -132,9 +149,9 @@ export class RelayedProviderChild extends EventEmitter implements ProviderChild 
     }
   }
 
-  /** Lets held output through, in order, once the consumer can route it. */
-  releaseOutput(): void {
-    this.output.release()
+  /** Lets held output through, in order, once the consumer can route it; `first` goes ahead of it. */
+  releaseOutput(first?: readonly string[]): void {
+    this.output.release(first)
   }
 
   kill(signal?: NodeJS.Signals | number): boolean {
