@@ -161,7 +161,9 @@ export class RelayedProviderOutput {
 
   private ack(force = false): Promise<void> {
     this.acking = this.acking.then(async () => {
-      const ceiling = this.final ? null : (this.options.ackFloor?.ceiling() ?? null)
+      // The daemon asking (its in-memory spool is at its cap) outranks the floor, so a huge open
+      // message can't stall the agent behind back-pressure.
+      const ceiling = this.final || force ? null : (this.options.ackFloor?.ceiling() ?? null)
       const target = ceiling === null ? this.pushedSeq : Math.min(this.pushedSeq, ceiling)
       if (target <= this.ackedSeq || this.stopped) {
         return
