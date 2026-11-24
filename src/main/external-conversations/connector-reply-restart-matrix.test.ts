@@ -759,16 +759,16 @@ describe('an empty turn is asked once more, from its live end only', () => {
   const asking = (result: Awaited<ReturnType<EmptyRetrySend>>) =>
     start({ bot: true, continuationsSettled: Promise.resolve(), retry: { send: send(result) } })
   const ended = { sessionId: 'chat-1', stamps: [stampOf('d1')], prose: '', bot: true, links: [] }
+  const end = (opener: string, key = 'item:t1', toolsRan = false) => ({
+    turnItemId: key,
+    openerItemId: agentJournalSubmissionKey(opener),
+    outcome: 'success' as const,
+    toolsRan,
+    turnStartedAt: NOW,
+    live: true as const
+  })
   const liveEnd = (p: ReturnType<typeof start>, key: string, opener: string, toolsRan: boolean) =>
-    p.fillTurn({
-      ...ended,
-      turnItemId: key,
-      openerItemId: agentJournalSubmissionKey(opener),
-      outcome: 'success',
-      toolsRan,
-      turnStartedAt: NOW,
-      live: true
-    })
+    p.fillTurn({ ...ended, ...end(opener, key, toolsRan) })
 
   it('asks once; still empty, the request closes with no answer and the first turn’s tools', async () => {
     const p = asking('accepted')
@@ -815,14 +815,15 @@ describe('an empty turn is asked once more, from its live end only', () => {
     })
   })
 
-  it('closes with no answer at once when the ask is refused', async () => {
+  it('closes with one no answer at once when the ask is refused', async () => {
     const p = asking('refused')
-    admit(p.db, 'm1', asked('d1'))
+    admit(p.db, 'm1', asked('d1', ['d2']))
     p.show([p.message('m1'), ...p.turn('item:t1', 'm1', 'completed')])
-    await liveEnd(p, 'item:t1', 'm1', false)
+    await p.fillTurn({ ...ended, stamps: [{ ...stampOf('d1'), carried: ['d2'] }], ...end('m1') })
     await p.publish()
     expect(asks).toHaveLength(1)
-    expect(p.outcomes()).toEqual({ d1: { outcome: 'no_answer', head: 'd1' } })
+    const closed = { outcome: 'no_answer', head: 'd1' }
+    expect(p.outcomes()).toEqual({ d1: closed, d2: closed })
   })
 })
 

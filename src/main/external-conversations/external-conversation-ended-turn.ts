@@ -119,12 +119,12 @@ function outboxTurn(
   if (!turnItemId) {
     return {}
   }
-  const { prose, toolsRan } = structuredAgentSessionTurnReply(items, turnItemId, false)
+  const { prose, botProse, toolsRan } = structuredAgentSessionTurnReply(items, turnItemId)
   return {
     turnItemId,
     stamps: connectorReplyTurnStamps({ items, submissions }, opener, turnItemId),
     turnProse: prose,
-    turnBotProse: structuredAgentSessionTurnReply(items, turnItemId, true).prose,
+    turnBotProse: botProse,
     turnToolsRan: toolsRan
   }
 }

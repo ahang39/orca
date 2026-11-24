@@ -18,6 +18,7 @@ import type {
 } from '../connector-cloud/connector-reply-outbox'
 import type { ConversationReplyFill } from './external-conversation-reply-fill'
 import { fillRecoveredTurn } from './external-conversation-reply-turn-fill'
+import { heldHeads } from './external-conversation-reply-empty-retry'
 import {
   claimCut,
   expectOf,
@@ -224,12 +225,16 @@ export class ConnectorReplyRecovery {
       const verdict = evidence(row)
       return verdict ? [{ row, verdict }] : []
     })
+    const heads = heldHeads(
+      fills.flatMap(({ row, verdict }) => (verdict.outcome === 'no_answer' ? [row] : [])),
+      view
+    )
     await journal.fillOutcomes(
       fills.map(({ row, verdict }) => ({
         account: row.account,
         deliveryId: row.deliveryId,
         outcome: verdict.outcome,
-        answerDeliveryId: row.deliveryId,
+        answerDeliveryId: heads.get(row) ?? row.deliveryId,
         ...expectOf(row),
         ...(verdict.failure ? { failure: verdict.failure } : {})
       }))

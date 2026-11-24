@@ -154,3 +154,29 @@ export function emptyRetrySend(
     }
   }
 }
+
+/** Rows an empty turn held for its retry share one answer per conversation, as its live fill would
+ *  have keyed them: the earliest admitted. */
+export function heldHeads(
+  rows: readonly JournalConnectorReplyRow[],
+  view: { messageOf: (row: JournalConnectorReplyRow) => { sequence: number } | undefined }
+): Map<JournalConnectorReplyRow, string> {
+  const at = (row: JournalConnectorReplyRow) =>
+    view.messageOf(row)?.sequence ?? Number.MAX_SAFE_INTEGER
+  const first = new Map<string, JournalConnectorReplyRow>()
+  for (const row of rows) {
+    const key = JSON.stringify([row.cut?.turnId, row.account, row.conversation])
+    const known = first.get(key)
+    if (row.emptyRetried && row.cut && (!known || at(row) < at(known))) {
+      first.set(key, row)
+    }
+  }
+  const heads = new Map<JournalConnectorReplyRow, string>()
+  for (const row of rows) {
+    const head = first.get(JSON.stringify([row.cut?.turnId, row.account, row.conversation]))
+    if (row.emptyRetried && head) {
+      heads.set(row, head.deliveryId)
+    }
+  }
+  return heads
+}
